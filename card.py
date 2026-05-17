@@ -10,17 +10,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 log = logging.getLogger(__name__)
 
-# Bundled Kanit (Thai + Latin) — works on Linux/Docker.
-# Sukhumvit Set kept as macOS dev fallback.
+# Bundled Sukhumvit Set — works on both Mac dev and Linux/Docker prod.
+# Kanit kept as fallback in case the .ttc file is ever missing.
 _ASSETS = Path(__file__).parent / "assets" / "fonts"
-FONT_PATH = str(_ASSETS / "Kanit-Regular.ttf")
-FONT_PATH_BOLD = str(_ASSETS / "Kanit-Bold.ttf")
-FONT_REG_IDX = 0
-FONT_BOLD_IDX = 0
+FONT_PATH = str(_ASSETS / "SukhumvitSet.ttc")
+FONT_REG_IDX = 2
+FONT_BOLD_IDX = 5
 
-_FALLBACK_PATH = "/System/Library/Fonts/Supplemental/SukhumvitSet.ttc"
-_FALLBACK_REG_IDX = 2
-_FALLBACK_BOLD_IDX = 5
+_FALLBACK_PATH = str(_ASSETS / "Kanit-Regular.ttf")
+_FALLBACK_PATH_BOLD = str(_ASSETS / "Kanit-Bold.ttf")
 
 # Card dimensions
 W, H = 640, 480
@@ -37,15 +35,13 @@ WHITE_DIM = (255, 255, 255, 225)
 
 def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     try:
-        path = FONT_PATH_BOLD if bold else FONT_PATH
-        return ImageFont.truetype(path, size)
+        return ImageFont.truetype(
+            FONT_PATH, size, index=FONT_BOLD_IDX if bold else FONT_REG_IDX
+        )
     except Exception:
         try:
-            return ImageFont.truetype(
-                _FALLBACK_PATH,
-                size,
-                index=_FALLBACK_BOLD_IDX if bold else _FALLBACK_REG_IDX,
-            )
+            path = _FALLBACK_PATH_BOLD if bold else _FALLBACK_PATH
+            return ImageFont.truetype(path, size)
         except Exception:
             return ImageFont.load_default()
 
