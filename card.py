@@ -308,27 +308,45 @@ def _draw_chart(
         for i in range(len(poly) - 1):
             d.line([poly[i], poly[i + 1]], fill=line_color, width=2)
 
-    # Volume bars at the bottom — clip to 90th percentile so a single opening
-    # spike doesn't squash the rest of the day into invisible nubs.
+    # Volume bars at the bottom — dark, muted, fade from dark green/red at the
+    # top of each bar to grayish-transparent at the bottom of the volume area.
+    # Clip to 90th percentile so an opening spike doesn't squash the rest of
+    # the day into invisible nubs.
     valid_vols = sorted(v for v in volumes if v is not None and v > 0)
     if valid_vols:
         idx_p90 = max(0, int(len(valid_vols) * 0.90) - 1)
         v_scale = valid_vols[idx_p90] or valid_vols[-1]
         if v_scale > 0:
             vol_y0 = y + line_h + 8
-            vol_color = (line_color[0], line_color[1], line_color[2], 130)
-            # Wider bars: aim for ~3px per bar with 1px gap
+
+            # Render bars into their own RGBA layer so we can overlay a
+            # vertical fade-to-gray mask uniformly across the volume area.
+            bar_layer = Image.new("RGBA", (w, vol_h), (0, 0, 0, 0))
+            bd = ImageDraw.Draw(bar_layer)
+            # Dark, muted green/red — roughly 50% brightness of the line color
+            dark = (
+                max(40, line_color[0] // 2),
+                max(40, line_color[1] // 2),
+                max(40, line_color[2] // 2),
+                255,
+            )
             bar_w = max(2, int(w / n) - 1)
             for i, v in enumerate(volumes):
                 if v is None or v <= 0:
                     continue
                 ratio = min(1.0, v / v_scale)
                 bar_h = max(1, int(ratio * vol_h * 0.95))
-                bx = x + int(i * w / (n - 1)) - bar_w // 2
-                d.rectangle(
-                    [bx, vol_y0 + (vol_h - bar_h), bx + bar_w, vol_y0 + vol_h],
-                    fill=vol_color,
-                )
+                bx = int(i * w / (n - 1)) - bar_w // 2
+                bd.rectangle([bx, vol_h - bar_h, bx + bar_w, vol_h], fill=dark)
+
+            # Vertical alpha gradient: solid at top of volume area, fading
+            # toward ~30 at the bottom so the bars dissolve into the bg.
+            t = np.linspace(0.0, 1.0, vol_h)
+            alpha_col = (130 * (1.0 - t * 0.78)).astype(np.uint8)
+            grad_mask = np.tile(alpha_col[:, None], (1, w)).astype(np.uint8)
+            mask_img = Image.fromarray(grad_mask, mode="L")
+            bar_layer.putalpha(ImageChops.multiply(bar_layer.split()[3], mask_img))
+            base.alpha_composite(bar_layer, (x, vol_y0))
 
     # X-axis time labels (24h format), 4 evenly spaced
     label_font = _font(22)
