@@ -220,6 +220,25 @@ def _round_logo(logo: Image.Image, size: int) -> Image.Image:
     return out
 
 
+def _session_hours(first_ts: Any) -> tuple[tuple[int, int], tuple[int, int], list[tuple[int, int]]]:
+    """Return (session_open, session_close, label_times) for the given timestamp's
+    market. Falls back to nice round labels if the timezone is unknown."""
+    tz_name = ""
+    try:
+        tz_name = str(first_ts.tzinfo) if first_ts.tzinfo else ""
+    except Exception:
+        pass
+
+    if "Bangkok" in tz_name or "BKK" in tz_name or "+07" in tz_name:
+        # SET — morning 10:00-12:30, afternoon 14:30-16:30 (lunch gap drawn as-is)
+        return (10, 0), (16, 30), [(10, 0), (12, 0), (14, 30), (16, 30)]
+    if "New_York" in tz_name or "America" in tz_name or "EST" in tz_name or "EDT" in tz_name:
+        # US — continuous 09:30-16:00 ET
+        return (9, 30), (16, 0), [(9, 30), (12, 0), (14, 0), (16, 0)]
+    # Fallback — span the data range with 4 evenly spaced labels
+    return (first_ts.hour, first_ts.minute), (first_ts.hour, first_ts.minute), []
+
+
 def _draw_chart(
     base: Image.Image,
     intraday: Sequence[tuple[Any, float, float | None]],
@@ -230,12 +249,16 @@ def _draw_chart(
     h: int,
     line_color: tuple,
 ) -> None:
-    """Line chart + volume bars at bottom. No Y-axis labels. 24h time labels."""
+    """Line chart + volume bars at bottom. X-axis spans the official trading
+    session for the symbol's market (SET 10:00-16:30, US 09:30-16:00 ET).
+    Each data point is plotted at its real time-of-day, so partial sessions
+    leave the right side empty and Thai's lunch break shows as a gap."""
     if not intraday or len(intraday) < 2:
         return
 
     raw_prices = [p for _, p, _ in intraday]
     volumes = [v for _, _, v in intraday]
+    timestamps = [t for t, _, _ in intraday]
     # 3-point moving average smooths step-function ticks
     prices: list[float] = []
     for i, _ in enumerate(raw_prices):
@@ -256,10 +279,30 @@ def _draw_chart(
 
     n = len(intraday)
 
-    def line_xy(i: int, price: float) -> tuple[int, int]:
-        px = x + int(i * w / (n - 1))
+    # Resolve session window from the data's timezone
+    sess_open, sess_close, label_times = _session_hours(timestamps[0])
+    open_min = sess_open[0] * 60 + sess_open[1]
+    close_min = sess_close[0] * 60 + sess_close[1]
+    if close_min <= open_min:
+        # Fallback: use data range so the chart still draws
+        last_ts = timestamps[-1]
+        open_min = timestamps[0].hour * 60 + timestamps[0].minute
+        close_min = max(open_min + 1, last_ts.hour * 60 + last_ts.minute)
+        # Evenly spaced labels across the data range
+        label_times = []
+        for j in range(4):
+            mm = open_min + j * (close_min - open_min) // 3
+            label_times.append((mm // 60, mm % 60))
+    session_len = close_min - open_min
+
+    def time_to_x(ts: Any) -> int:
+        m = ts.hour * 60 + ts.minute - open_min
+        m = max(0, min(session_len, m))
+        return x + int(m * w / session_len)
+
+    def line_xy(ts: Any, price: float) -> tuple[int, int]:
         py = y + int((p_hi - price) / (p_hi - p_lo) * line_h)
-        return px, py
+        return time_to_x(ts), py
 
     d = ImageDraw.Draw(base, "RGBA")
 
@@ -274,8 +317,9 @@ def _draw_chart(
     # Vertical gradient fill under the line — bright near the line, fades to
     # near-transparent at the bottom. Matches modern finance-app aesthetics
     # (Apple Stocks / Settrade / Robinhood).
-    poly = [line_xy(i, p) for i, p in enumerate(prices)]
-    poly_filled = poly + [(x + w, y + line_h), (x, y + line_h)]
+    poly = [line_xy(t, p) for t, p in zip(timestamps, prices)]
+    last_x = poly[-1][0]
+    poly_filled = poly + [(last_x, y + line_h), (x, y + line_h)]
 
     # Build the gradient as an RGBA numpy array sized to the plot area
     grad_arr = np.zeros((line_h, w, 4), dtype=np.uint8)
@@ -319,28 +363,24 @@ def _draw_chart(
         if v_scale > 0:
             vol_y0 = y + line_h + 8
 
-            # Render bars into their own RGBA layer so we can overlay a
-            # vertical fade-to-gray mask uniformly across the volume area.
             bar_layer = Image.new("RGBA", (w, vol_h), (0, 0, 0, 0))
             bd = ImageDraw.Draw(bar_layer)
-            # Dark, muted green/red — roughly 50% brightness of the line color
             dark = (
                 max(40, line_color[0] // 2),
                 max(40, line_color[1] // 2),
                 max(40, line_color[2] // 2),
                 255,
             )
-            bar_w = max(2, int(w / n) - 1)
-            for i, v in enumerate(volumes):
+            # Bar width derived from a 5-minute slot within the session
+            bar_w = max(2, int(w * 5 / session_len) - 1)
+            for ts, v in zip(timestamps, volumes):
                 if v is None or v <= 0:
                     continue
                 ratio = min(1.0, v / v_scale)
                 bar_h = max(1, int(ratio * vol_h * 0.95))
-                bx = int(i * w / (n - 1)) - bar_w // 2
+                bx = time_to_x(ts) - x - bar_w // 2
                 bd.rectangle([bx, vol_h - bar_h, bx + bar_w, vol_h], fill=dark)
 
-            # Vertical alpha gradient: solid at top of volume area, fading
-            # toward ~30 at the bottom so the bars dissolve into the bg.
             t = np.linspace(0.0, 1.0, vol_h)
             alpha_col = (130 * (1.0 - t * 0.78)).astype(np.uint8)
             grad_mask = np.tile(alpha_col[:, None], (1, w)).astype(np.uint8)
@@ -348,21 +388,19 @@ def _draw_chart(
             bar_layer.putalpha(ImageChops.multiply(bar_layer.split()[3], mask_img))
             base.alpha_composite(bar_layer, (x, vol_y0))
 
-    # X-axis time labels (24h format), 4 evenly spaced
+    # X-axis labels at fixed market times (10:00 / 12:00 / 14:30 / 16:30 for SET,
+    # 09:30 / 12:00 / 14:00 / 16:00 for US).
     label_font = _font(22)
-    n_labels = 4
-    for j in range(n_labels):
-        idx = int(j * (n - 1) / (n_labels - 1))
-        ts, _, _ = intraday[idx]
-        try:
-            label = ts.strftime("%H:%M")
-        except Exception:
-            label = str(ts)
+    last_idx = len(label_times) - 1
+    for j, (lh, lm) in enumerate(label_times):
+        m_off = lh * 60 + lm - open_min
+        m_off = max(0, min(session_len, m_off))
+        bx = x + int(m_off * w / session_len)
+        label = f"{lh:02d}:{lm:02d}"
         lw = d.textlength(label, font=label_font)
-        bx, _ = line_xy(idx, prices[idx])
         if j == 0:
             x_text = x
-        elif j == n_labels - 1:
+        elif j == last_idx:
             x_text = x + w - int(lw)
         else:
             x_text = bx - int(lw / 2)
