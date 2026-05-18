@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 log = logging.getLogger(__name__)
 
@@ -270,10 +271,34 @@ def _draw_chart(
         d.line([(cx, mid_y), (min(cx + dash, x + w), mid_y)], fill=GRID_LINE, width=1)
         cx += dash + gap
 
-    # Line-only style — no opaque area fill, just the curve with a faint glow
-    # so the card breathes more (airy / สบายตา).
+    # Vertical gradient fill under the line — bright near the line, fades to
+    # near-transparent at the bottom. Matches modern finance-app aesthetics
+    # (Apple Stocks / Settrade / Robinhood).
     poly = [line_xy(i, p) for i, p in enumerate(prices)]
-    glow = (line_color[0], line_color[1], line_color[2], 55)
+    poly_filled = poly + [(x + w, y + line_h), (x, y + line_h)]
+
+    # Build the gradient as an RGBA numpy array sized to the plot area
+    grad_arr = np.zeros((line_h, w, 4), dtype=np.uint8)
+    grad_arr[:, :, 0] = line_color[0]
+    grad_arr[:, :, 1] = line_color[1]
+    grad_arr[:, :, 2] = line_color[2]
+    # alpha eases from ~170 at top to 0 at bottom (power curve, smoother fade)
+    t = np.linspace(0.0, 1.0, line_h)
+    alpha_col = (170 * (1.0 - t) ** 1.4).astype(np.uint8)
+    grad_arr[:, :, 3] = alpha_col[:, None]
+    gradient = Image.fromarray(grad_arr, mode="RGBA")
+
+    # Mask = polygon shape in plot-local coordinates
+    mask = Image.new("L", (w, line_h), 0)
+    local_poly = [(px - x, py - y) for px, py in poly_filled]
+    ImageDraw.Draw(mask).polygon(local_poly, fill=255)
+    # Combine gradient's vertical alpha with the polygon mask
+    gradient.putalpha(ImageChops.multiply(gradient.split()[3], mask))
+    base.alpha_composite(gradient, (x, y))
+
+    # Draw the line on top — soft glow + crisp main stroke
+    d = ImageDraw.Draw(base, "RGBA")
+    glow = (line_color[0], line_color[1], line_color[2], 80)
     try:
         d.line(poly, fill=glow, width=8, joint="curve")
         d.line(poly, fill=line_color, width=3, joint="curve")
