@@ -22,8 +22,8 @@ FONT_BOLD_IDX = 5
 _FALLBACK_PATH = str(_ASSETS / "Kanit-Regular.ttf")
 _FALLBACK_PATH_BOLD = str(_ASSETS / "Kanit-Bold.ttf")
 
-# Canvas
-W, H = 720, 1280
+# Canvas (chart-dominated portrait; no stats grid below)
+W, H = 720, 1100
 
 # Palette
 BG = (0, 0, 0, 255)
@@ -270,22 +270,18 @@ def _draw_chart(
         d.line([(cx, mid_y), (min(cx + dash, x + w), mid_y)], fill=GRID_LINE, width=1)
         cx += dash + gap
 
-    # Area fill — translucent (lighter than line)
-    fill_color = (line_color[0], line_color[1], line_color[2], 38)
+    # Line-only style — no opaque area fill, just the curve with a faint glow
+    # so the card breathes more (airy / สบายตา).
     poly = [line_xy(i, p) for i, p in enumerate(prices)]
-    poly_filled = poly + [(x + w, y + line_h), (x, y + line_h)]
-    d.polygon(poly_filled, fill=fill_color)
-
-    # Line with soft glow + smooth joins
-    glow = (line_color[0], line_color[1], line_color[2], 80)
+    glow = (line_color[0], line_color[1], line_color[2], 55)
     try:
-        d.line(poly, fill=glow, width=9, joint="curve")
-        d.line(poly, fill=line_color, width=4, joint="curve")
+        d.line(poly, fill=glow, width=8, joint="curve")
+        d.line(poly, fill=line_color, width=3, joint="curve")
     except TypeError:
         for i in range(len(poly) - 1):
-            d.line([poly[i], poly[i + 1]], fill=glow, width=9)
+            d.line([poly[i], poly[i + 1]], fill=glow, width=8)
         for i in range(len(poly) - 1):
-            d.line([poly[i], poly[i + 1]], fill=line_color, width=4)
+            d.line([poly[i], poly[i + 1]], fill=line_color, width=3)
 
     # Volume bars at the bottom — clip to 90th percentile so a single opening
     # spike doesn't squash the rest of the day into invisible nubs.
@@ -547,26 +543,13 @@ def render_card(
         market_state=market_state, change_pct=change_pct, is_up=is_up,
     )
 
-    # 4. Chart — fills remaining vertical space above stats
+    # 4. Chart — fills the remaining vertical space (stats grid removed)
     next_y += 20
     chart_x = PAD
     chart_w = W - 2 * PAD
-    # Reserve space for stats grid (5 rows ~48px + margins)
-    stats_h = 5 * 48 + 30
-    chart_h = H - next_y - stats_h - 60
+    chart_h = H - next_y - 60  # 60px bottom margin reserves room for x-axis labels
     if intraday:
         _draw_chart(img, intraday, x=chart_x, y=next_y, w=chart_w, h=chart_h, line_color=line_color)
-
-    # 5. Stats grid below chart
-    y_stats = next_y + chart_h + 40
-    rows = [
-        ("เปิด",         _fmt_price(open_price),      "ปริมาณ",       _fmt_compact(volume)),
-        ("มูลค่าตลาด",   _fmt_compact(market_cap),    "ต่ำสุดของวัน", _fmt_price(day_low)),
-        ("ต่ำสุดของปี",  _fmt_price(year_low),        "EPS (TTM)",     _fmt_price(eps)),
-        ("สูงสุดของวัน", _fmt_price(day_high),        "สูงสุดของปี",  _fmt_price(year_high)),
-        ("อัตรา P/E",    _fmt_pe(pe),                 "",              ""),
-    ]
-    _draw_stats(d, x0=PAD, y0=y_stats, width=W - 2 * PAD, rows=rows)
 
     out = io.BytesIO()
     img.convert("RGB").save(out, format="PNG", optimize=True)
