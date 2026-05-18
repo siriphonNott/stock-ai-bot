@@ -21,7 +21,7 @@ from card import _fetch_logo, render_card
 from intent import classify_with_llm, looks_like_stock_command
 from list_card import render_list_card
 from screener import enrich_with_intraday, fetch_movers, fetch_quotes
-from stock import format_metrics, get_earnings_payload, get_stock_metrics
+from stock import format_metrics, get_earnings_payload, get_intraday_history, get_stock_metrics
 from summarizer import summarize_earnings
 
 load_dotenv()
@@ -165,8 +165,9 @@ async def _process_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE, sy
         return
     symbol = resolved
 
-    # Card image first (green/red based on day change)
+    # Card image — dark portrait layout with intraday chart
     try:
+        intraday = await asyncio.to_thread(get_intraday_history, symbol)
         card_bytes = await asyncio.to_thread(
             render_card,
             symbol=metrics.symbol,
@@ -174,8 +175,17 @@ async def _process_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE, sy
             price=metrics.price,
             change=metrics.change,
             change_pct=metrics.change_pct,
-            market_cap=metrics.market_cap,
             currency=metrics.currency,
+            open_price=metrics.open_price,
+            day_low=metrics.day_low,
+            day_high=metrics.day_high,
+            year_low=metrics.year_low,
+            year_high=metrics.year_high,
+            volume=metrics.volume,
+            market_cap=metrics.market_cap,
+            eps=metrics.eps,
+            pe=metrics.pe,
+            intraday=intraday,
         )
         if card_bytes:
             await update.message.reply_photo(photo=card_bytes)

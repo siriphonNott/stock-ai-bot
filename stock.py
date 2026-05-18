@@ -33,6 +33,12 @@ class StockMetrics:
     bvps: float | None
     pb: float | None
     ps: float | None
+    open_price: float | None = None
+    day_low: float | None = None
+    day_high: float | None = None
+    year_low: float | None = None
+    year_high: float | None = None
+    volume: float | None = None
 
 
 def get_stock_metrics(symbol: str) -> StockMetrics | None:
@@ -62,7 +68,29 @@ def get_stock_metrics(symbol: str) -> StockMetrics | None:
         bvps=_safe_float(info.get("bookValue")),
         pb=_safe_float(info.get("priceToBook")),
         ps=_safe_float(info.get("priceToSalesTrailing12Months")),
+        open_price=_safe_float(info.get("regularMarketOpen") or info.get("open")),
+        day_low=_safe_float(info.get("regularMarketDayLow") or info.get("dayLow")),
+        day_high=_safe_float(info.get("regularMarketDayHigh") or info.get("dayHigh")),
+        year_low=_safe_float(info.get("fiftyTwoWeekLow")),
+        year_high=_safe_float(info.get("fiftyTwoWeekHigh")),
+        volume=_safe_float(info.get("regularMarketVolume") or info.get("volume")),
     )
+
+
+def get_intraday_history(symbol: str) -> list[tuple[Any, float]] | None:
+    """Return today's intraday closes as [(timestamp, close_price), ...]."""
+    try:
+        hist = yf.Ticker(symbol).history(period="1d", interval="5m")
+    except Exception:
+        return None
+    if hist is None or hist.empty:
+        return None
+    out: list[tuple[Any, float]] = []
+    for idx, row in hist.iterrows():
+        v = _safe_float(row.get("Close"))
+        if v is not None:
+            out.append((idx, v))
+    return out or None
 
 
 def _row(df, row_name):
@@ -116,9 +144,18 @@ def get_earnings_payload(symbol: str) -> dict | None:
     except Exception:
         pass
 
+    info = ticker.info or {}
     return {
         "symbol": symbol.upper(),
-        "currency": (ticker.info or {}).get("currency", "USD"),
+        "currency": info.get("currency", "USD"),
+        "price": _safe_float(info.get("currentPrice") or info.get("regularMarketPrice")),
+        "eps": _safe_float(info.get("trailingEps")),
+        "bvps": _safe_float(info.get("bookValue")),
+        "target_low": _safe_float(info.get("targetLowPrice")),
+        "target_mean": _safe_float(info.get("targetMeanPrice")),
+        "target_median": _safe_float(info.get("targetMedianPrice")),
+        "target_high": _safe_float(info.get("targetHighPrice")),
+        "num_analysts": _safe_float(info.get("numberOfAnalystOpinions")),
         "quarterly_revenue": series_to_list(revenue),
         "quarterly_gross_profit": series_to_list(gross_profit),
         "quarterly_operating_income": series_to_list(op_income),

@@ -4,6 +4,7 @@ Outputs Telegram HTML <pre> code block for reliable rendering.
 """
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 
 
@@ -72,6 +73,14 @@ def _yoy_qoq_notes(vals: list[float]) -> str:
     if qoq:
         parts.append(f"{qoq} QoQ")
     return f"({', '.join(parts)})" if parts else ""
+
+
+def _graham_fair_value(eps: float | None, bvps: float | None) -> float | None:
+    """Graham's Number: √(22.5 × EPS × BVPS). Used as fallback when analyst
+    targets are missing."""
+    if eps is None or bvps is None or eps <= 0 or bvps <= 0:
+        return None
+    return math.sqrt(22.5 * eps * bvps)
 
 
 def _roic(ni: float | None, debt: float | None, equity: float | None) -> float | None:
@@ -185,6 +194,48 @@ def summarize_earnings(payload: dict) -> str:
             d = _row("Debt", _fmt_m(debt_val, cur))
         if d:
             lines.append(d)
+
+    # Stock Fair Value — blended from analyst price targets
+    t_low = payload.get("target_low")
+    t_mean = payload.get("target_mean")
+    t_median = payload.get("target_median")
+    n_analysts = payload.get("num_analysts")
+
+    targets: list[tuple[str, float, str]] = []
+    if t_low is not None and t_low > 0:
+        targets.append(("Analyst Low", t_low, ""))
+    if t_mean is not None and t_mean > 0:
+        note = f"(n={int(n_analysts)})" if n_analysts else ""
+        targets.append(("Analyst Mean", t_mean, note))
+    if t_median is not None and t_median > 0:
+        targets.append(("Analyst Median", t_median, ""))
+
+    price = payload.get("price")
+
+    def _verdict_note(value: float, label: str = "") -> str:
+        if price is not None and price > 0:
+            diff_pct = (value - price) / price * 100
+            verdict = "Undervalued" if diff_pct > 0 else "Overvalued"
+            head = f"{label}, " if label else ""
+            return f"({head}vs {cur}{price:,.2f}, {verdict} {abs(diff_pct):.0f}%)"
+        return f"({label})" if label else ""
+
+    if targets:
+        for label, val, note in targets:
+            r = _row(label, f"{cur}{val:,.2f}", note)
+            if r:
+                lines.append(r)
+        avg = sum(v for _, v, _ in targets) / len(targets)
+        a = _row("Avg Fair Value", f"{cur}{avg:,.2f}", _verdict_note(avg))
+        if a:
+            lines.append(a)
+    else:
+        # Fallback: Graham's Number when no analyst coverage
+        graham = _graham_fair_value(payload.get("eps"), payload.get("bvps"))
+        if graham is not None:
+            g = _row("Stock Fair Value", f"{cur}{graham:,.2f}", _verdict_note(graham, "Graham"))
+            if g:
+                lines.append(g)
 
     if not lines:
         return ""
