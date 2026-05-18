@@ -8,7 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from card import _font
 
@@ -21,7 +21,10 @@ UA = (
 )
 
 # Canvas
-W, H = 720, 1280
+W, H = 720, 1180
+
+# Container behind the history rows (slightly lighter than BG, rounded)
+HISTORY_BG = (18, 20, 24, 255)
 
 # Palette (dark mode, glossy)
 BG = (8, 10, 12, 255)
@@ -36,11 +39,11 @@ TICK = (110, 114, 120, 255)
 DASH = (44, 48, 54, 255)
 
 # Zone palette: (label, vivid color used for active fill / text, dimmed text color)
-ZONE_EXTREME_FEAR = ("EXTREME FEAR", (231, 76, 60, 255),   (231, 76, 60, 235))
-ZONE_FEAR          = ("FEAR",          (230, 126, 34, 255), (230, 126, 34, 235))
-ZONE_NEUTRAL       = ("NEUTRAL",       (200, 200, 205, 255),(190, 190, 196, 235))
-ZONE_GREED         = ("GREED",         (98, 220, 122, 255), (98, 220, 122, 235))
-ZONE_EXTREME_GREED = ("EXTREME GREED", (40, 200, 130, 255), (40, 200, 130, 235))
+ZONE_EXTREME_FEAR = ("EXTREME FEAR", (235, 80, 70, 255),    (235, 80, 70, 235))
+ZONE_FEAR          = ("FEAR",          (240, 140, 50, 255),  (240, 140, 50, 235))
+ZONE_NEUTRAL       = ("NEUTRAL",       (200, 200, 205, 255), (190, 190, 196, 235))
+ZONE_GREED         = ("GREED",         (90, 215, 110, 255),  (90, 215, 110, 235))
+ZONE_EXTREME_GREED = ("EXTREME GREED", (60, 200, 110, 255),  (60, 200, 110, 235))
 ZONES = (ZONE_EXTREME_FEAR, ZONE_FEAR, ZONE_NEUTRAL, ZONE_GREED, ZONE_EXTREME_GREED)
 
 
@@ -122,11 +125,22 @@ def _draw_gauge(base: Image.Image, *, cx: int, cy: int, score: float) -> None:
         start = 180 + i * 36
         end = 180 + (i + 1) * 36
         if i == active:
+            # Active segment: bright fill + subtle lighter outline ring
             d.pieslice(
                 [cx - r_active, cy - r_active, cx + r_active, cy + r_active],
                 start, end, fill=vivid,
             )
-            # Subtle inner ring on the active segment, for definition
+            # Lighter outline around the active segment for a "raised" feel
+            outline = (
+                min(255, vivid[0] + 40),
+                min(255, vivid[1] + 30),
+                min(255, vivid[2] + 40),
+                255,
+            )
+            d.arc(
+                [cx - r_active, cy - r_active, cx + r_active, cy + r_active],
+                start, end, fill=outline, width=3,
+            )
         else:
             d.pieslice(
                 [cx - r_inactive, cy - r_inactive, cx + r_inactive, cy + r_inactive],
@@ -173,11 +187,11 @@ def _draw_gauge(base: Image.Image, *, cx: int, cy: int, score: float) -> None:
         tw = d.textlength(str(n), font=num_font)
         d.text((nx - tw / 2, ny - 12), str(n), font=num_font, fill=TEXT_DIM)
 
-    # 0 and 100 at the bottom outer ends
-    end_font = _font(20)
-    d.text((cx - r_active + 8, cy + 14), "0", font=end_font, fill=TEXT_DIM)
+    # 0 and 100 — tucked right below the gauge ends, close to the segments
+    end_font = _font(22)
+    d.text((cx - r_active - 4, cy + 8), "0", font=end_font, fill=TEXT_DIM)
     end_w = d.textlength("100", font=end_font)
-    d.text((cx + r_active - end_w - 8, cy + 14), "100", font=end_font, fill=TEXT_DIM)
+    d.text((cx + r_active - end_w + 4, cy + 8), "100", font=end_font, fill=TEXT_DIM)
 
     # Segment labels — inside each segment, rotated for the extreme ones
     label_font_big = _font(26, bold=True)
@@ -207,14 +221,22 @@ def _draw_gauge(base: Image.Image, *, cx: int, cy: int, score: float) -> None:
     ny = cy + math.sin(ang) * n_len
     d.line([(cx, cy), (nx, ny)], fill=active_color, width=6)
 
-    # Glow under hub — radial blur
+    # Glow around hub — subtle ambient light, clipped so it stays inside the
+    # dial area (no halo bleeding into the empty space below the gauge).
     glow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     glow_d = ImageDraw.Draw(glow_layer)
+    glow_r = int(r_hub * 1.25)
     glow_d.ellipse(
-        [cx - r_hub * 2.2, cy - r_hub * 2.2, cx + r_hub * 2.2, cy + r_hub * 2.2],
-        fill=(active_color[0], active_color[1], active_color[2], 90),
+        [cx - glow_r, cy - glow_r, cx + glow_r, cy + glow_r],
+        fill=(active_color[0], active_color[1], active_color[2], 95),
     )
-    glow_blur = glow_layer.filter(ImageFilter.GaussianBlur(radius=22))
+    glow_blur = glow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    # Clip to the upper semicircle of the dial so the glow doesn't spill below.
+    clip = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(clip).pieslice(
+        [cx - r_dial, cy - r_dial, cx + r_dial, cy + r_dial], 180, 360, fill=255
+    )
+    glow_blur.putalpha(ImageChops.multiply(glow_blur.split()[3], clip))
     base.alpha_composite(glow_blur)
 
     # Hub disk
@@ -236,33 +258,45 @@ def _draw_dashed_hline(d: ImageDraw.ImageDraw, x0: int, x1: int, y: int) -> None
         x += 12
 
 
-def _draw_history(d: ImageDraw.ImageDraw, base: Image.Image, *, y0: int, data: dict) -> int:
+def _draw_history(
+    d: ImageDraw.ImageDraw, base: Image.Image, *, y0: int, data: dict, footer: str = ""
+) -> int:
     history = [
         ("Previous close", data.get("previous_close")),
         ("1 week ago",     data.get("previous_1_week")),
         ("1 month ago",    data.get("previous_1_month")),
         ("1 year ago",     data.get("previous_1_year")),
     ]
-    pad_x = 50
-    row_h = 110
+    outer_pad = 36
+    inner_pad_x = 32
+    inner_pad_y = 14
+    row_h = 100
+    footer_h = 50 if footer else 0
     label_font = _font(24)
     zone_font = _font(26, bold=True)
     num_font = _font(30, bold=True)
-    circle_r = 36
+    footer_font = _font(20)
+    circle_r = 34
+
+    container_h = row_h * len(history) + inner_pad_y * 2 + footer_h
+    container = [
+        outer_pad, y0, W - outer_pad, y0 + container_h,
+    ]
+    d.rounded_rectangle(container, radius=24, fill=HISTORY_BG)
+
+    row_x0 = outer_pad + inner_pad_x
+    row_x1 = W - outer_pad - inner_pad_x
 
     for i, (lbl, val) in enumerate(history):
-        y = y0 + i * row_h
-        # Label (top)
-        d.text((pad_x, y + 22), lbl, font=label_font, fill=TEXT_LABEL)
+        y = y0 + inner_pad_y + i * row_h
+        d.text((row_x0, y + 18), lbl, font=label_font, fill=TEXT_LABEL)
         if val is None:
             continue
         zone_label, vivid, _ = _zone(val)
-        # Zone name (below label) in zone color, lowercase capitalized like ref
         zone_disp = zone_label.title()
-        d.text((pad_x, y + 56), zone_disp, font=zone_font, fill=vivid)
+        d.text((row_x0, y + 50), zone_disp, font=zone_font, fill=vivid)
 
-        # Right side: circle outline with value inside
-        cx_r = W - pad_x - circle_r
+        cx_r = row_x1 - circle_r
         cy_r = y + row_h // 2
         d.ellipse(
             [cx_r - circle_r, cy_r - circle_r, cx_r + circle_r, cy_r + circle_r],
@@ -272,16 +306,28 @@ def _draw_history(d: ImageDraw.ImageDraw, base: Image.Image, *, y0: int, data: d
         vw = d.textlength(val_str, font=num_font)
         d.text((cx_r - vw / 2, cy_r - 22), val_str, font=num_font, fill=TEXT_WHITE)
 
-        # Dashed connector from zone text to circle
-        dash_x0 = pad_x + d.textlength(zone_disp, font=zone_font) + 20
+        dash_x0 = row_x0 + d.textlength(zone_disp, font=zone_font) + 20
         dash_x1 = cx_r - circle_r - 20
-        _draw_dashed_hline(d, int(dash_x0), int(dash_x1), y + 70)
+        _draw_dashed_hline(d, int(dash_x0), int(dash_x1), y + 64)
 
-        # Bottom divider (except after last row)
         if i < len(history) - 1:
-            d.line([(pad_x, y + row_h), (W - pad_x, y + row_h)], fill=DASH, width=1)
+            d.line([(row_x0, y + row_h), (row_x1, y + row_h)], fill=DASH, width=1)
 
-    return y0 + len(history) * row_h
+    # Footer line — inside the container, with a small clock-circle glyph
+    if footer:
+        fy = y0 + container_h - footer_h + 14
+        # Clock-like circle glyph
+        d.ellipse(
+            [row_x0, fy + 2, row_x0 + 18, fy + 20],
+            outline=TEXT_LABEL, width=2,
+        )
+        # Tiny "hands" inside the circle (12 o'clock + 3 o'clock)
+        cxg, cyg = row_x0 + 9, fy + 11
+        d.line([(cxg, cyg), (cxg, cyg - 5)], fill=TEXT_LABEL, width=1)
+        d.line([(cxg, cyg), (cxg + 4, cyg)], fill=TEXT_LABEL, width=1)
+        d.text((row_x0 + 28, fy), footer, font=footer_font, fill=TEXT_LABEL)
+
+    return y0 + container_h
 
 
 def _fmt_et_footer(iso: str) -> str:
@@ -322,21 +368,11 @@ def render_fear_greed_card(data: dict | None) -> bytes | None:
     cx, cy = W // 2, 560
     _draw_gauge(img, cx=cx, cy=cy, score=score)
 
-    # History rows
+    # History rows — sit close below the gauge bottom; footer baked into the
+    # bottom of the same container.
     d = ImageDraw.Draw(img, "RGBA")
-    y_end = _draw_history(d, img, y0=cy + 220, data=data)
-
-    # Footer
     footer = _fmt_et_footer(data.get("timestamp", ""))
-    if footer:
-        # tiny clock glyph + footer text
-        f_font = _font(20)
-        clock = "🕐"
-        # PIL won't render emoji on most fonts; fall back to a circle bullet
-        bullet = "○"
-        d.ellipse([pad_x, H - 50, pad_x + 16, H - 34],
-                  outline=TEXT_LABEL, width=2)
-        d.text((pad_x + 26, H - 52), footer, font=f_font, fill=TEXT_LABEL)
+    y_end = _draw_history(d, img, y0=cy + 100, data=data, footer=footer)
 
     out = io.BytesIO()
     img.convert("RGB").save(out, format="PNG", optimize=True)
