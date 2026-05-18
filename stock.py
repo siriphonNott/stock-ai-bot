@@ -39,6 +39,9 @@ class StockMetrics:
     year_low: float | None = None
     year_high: float | None = None
     volume: float | None = None
+    exchange_name: str | None = None
+    market_state: str | None = None
+    country: str | None = None
 
 
 def get_stock_metrics(symbol: str) -> StockMetrics | None:
@@ -74,23 +77,39 @@ def get_stock_metrics(symbol: str) -> StockMetrics | None:
         year_low=_safe_float(info.get("fiftyTwoWeekLow")),
         year_high=_safe_float(info.get("fiftyTwoWeekHigh")),
         volume=_safe_float(info.get("regularMarketVolume") or info.get("volume")),
+        exchange_name=info.get("fullExchangeName") or info.get("exchange"),
+        market_state=info.get("marketState"),
+        country=info.get("country"),
     )
 
 
-def get_intraday_history(symbol: str) -> list[tuple[Any, float]] | None:
-    """Return today's intraday closes as [(timestamp, close_price), ...]."""
+def get_intraday_history(symbol: str) -> list[tuple[Any, float, float | None]] | None:
+    """Return today's intraday bars as [(timestamp, close, volume), ...]."""
     try:
         hist = yf.Ticker(symbol).history(period="1d", interval="5m")
     except Exception:
         return None
     if hist is None or hist.empty:
         return None
-    out: list[tuple[Any, float]] = []
+    out: list[tuple[Any, float, float | None]] = []
     for idx, row in hist.iterrows():
         v = _safe_float(row.get("Close"))
         if v is not None:
-            out.append((idx, v))
+            out.append((idx, v, _safe_float(row.get("Volume"))))
     return out or None
+
+
+def get_fx_rate(base: str, target: str) -> float | None:
+    """Spot FX rate, e.g. get_fx_rate('USD', 'THB'). None on failure."""
+    if base == target:
+        return 1.0
+    try:
+        hist = yf.Ticker(f"{base}{target}=X").history(period="1d")
+    except Exception:
+        return None
+    if hist is None or hist.empty:
+        return None
+    return _safe_float(hist["Close"].iloc[-1])
 
 
 def _row(df, row_name):
