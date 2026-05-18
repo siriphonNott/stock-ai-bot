@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Sequence
 
+import requests
 from PIL import Image, ImageDraw, ImageFont
 
 log = logging.getLogger(__name__)
@@ -35,9 +36,67 @@ PILL_BG = (38, 38, 42, 255)
 RED = (255, 69, 96, 255)
 GREEN = (0, 200, 110, 255)
 
+# Used by list_card via _logo_panel_color()
+WHITE = (255, 255, 255, 255)
+DARK_PANEL = (30, 34, 42, 255)
+
 PAD = 40
 
 CURRENCY_SYMBOLS = {"USD": "US$", "THB": "฿", "EUR": "€", "GBP": "£", "JPY": "¥"}
+
+
+def _logo_panel_color(logo: Image.Image) -> tuple:
+    """Pick a panel background so the logo stays visible.
+
+    Strips background pixels (transparent or matching the 4 corners) and
+    averages only the logo's shape pixels. Bright logos → dark panel.
+    Used by list_card for top-movers thumbnails."""
+    pixels = list(logo.getdata())
+    if not pixels:
+        return WHITE
+
+    w, h = logo.size
+    corners = [
+        logo.getpixel((0, 0)),
+        logo.getpixel((w - 1, 0)),
+        logo.getpixel((0, h - 1)),
+        logo.getpixel((w - 1, h - 1)),
+    ]
+    transparent_corners = sum(1 for c in corners if len(c) > 3 and c[3] < 40)
+
+    if transparent_corners >= 3:
+        shape = [p for p in pixels if len(p) > 3 and p[3] > 40]
+    else:
+        bg = corners[0]
+        bg_brightness = (bg[0] + bg[1] + bg[2]) / 3
+        shape = [
+            p for p in pixels
+            if abs((p[0] + p[1] + p[2]) / 3 - bg_brightness) > 40
+            and (len(p) <= 3 or p[3] > 40)
+        ]
+
+    if not shape:
+        return WHITE
+    avg = sum((p[0] + p[1] + p[2]) / 3 for p in shape) / len(shape)
+    return DARK_PANEL if avg > 200 else WHITE
+
+
+def _fetch_logo(symbol: str) -> Image.Image | None:
+    """Fetch company logo PNG. Returns None if unavailable.
+
+    Kept here (vs unused inside the new card) because list_card still uses it
+    via bot.py for the top-movers list rendering."""
+    try:
+        r = requests.get(
+            f"https://financialmodelingprep.com/image-stock/{symbol.upper()}.png",
+            timeout=5,
+        )
+        if r.status_code != 200 or not r.content:
+            return None
+        return Image.open(io.BytesIO(r.content)).convert("RGBA")
+    except Exception:
+        log.debug("logo fetch failed for %s", symbol, exc_info=True)
+        return None
 
 
 def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
