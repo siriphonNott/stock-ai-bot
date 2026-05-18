@@ -6,10 +6,13 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import requests
 from PIL import Image, ImageChops, ImageDraw, ImageFont
+
+BKK_TZ = ZoneInfo("Asia/Bangkok")
 
 log = logging.getLogger(__name__)
 
@@ -221,8 +224,8 @@ def _round_logo(logo: Image.Image, size: int) -> Image.Image:
 
 
 def _session_hours(first_ts: Any) -> tuple[tuple[int, int], tuple[int, int], list[tuple[int, int]]]:
-    """Return (session_open, session_close, label_times) for the given timestamp's
-    market. Falls back to nice round labels if the timezone is unknown."""
+    """Return (session_open, session_close, label_times) in the symbol's local
+    market timezone. Falls back to the data range when timezone is unknown."""
     tz_name = ""
     try:
         tz_name = str(first_ts.tzinfo) if first_ts.tzinfo else ""
@@ -279,26 +282,33 @@ def _draw_chart(
 
     n = len(intraday)
 
-    # Resolve session window from the data's timezone
-    sess_open, sess_close, label_times = _session_hours(timestamps[0])
-    open_min = sess_open[0] * 60 + sess_open[1]
-    close_min = sess_close[0] * 60 + sess_close[1]
-    if close_min <= open_min:
-        # Fallback: use data range so the chart still draws
-        last_ts = timestamps[-1]
-        open_min = timestamps[0].hour * 60 + timestamps[0].minute
-        close_min = max(open_min + 1, last_ts.hour * 60 + last_ts.minute)
-        # Evenly spaced labels across the data range
-        label_times = []
+    # Resolve session window in the symbol's own timezone, then pin it to the
+    # trading date of the first data point. Using real tz-aware datetimes makes
+    # the math robust across DST transitions for US markets.
+    sess_open_hm, sess_close_hm, label_local_times = _session_hours(timestamps[0])
+    first_ts = timestamps[0]
+    sess_open_dt = first_ts.replace(
+        hour=sess_open_hm[0], minute=sess_open_hm[1], second=0, microsecond=0,
+    )
+    sess_close_dt = first_ts.replace(
+        hour=sess_close_hm[0], minute=sess_close_hm[1], second=0, microsecond=0,
+    )
+    session_secs = (sess_close_dt - sess_open_dt).total_seconds()
+    if session_secs <= 0:
+        # Fallback: span the data range; evenly spaced labels in source tz
+        sess_open_dt = first_ts
+        sess_close_dt = timestamps[-1]
+        session_secs = max(60.0, (sess_close_dt - sess_open_dt).total_seconds())
+        label_local_times = []
         for j in range(4):
-            mm = open_min + j * (close_min - open_min) // 3
-            label_times.append((mm // 60, mm % 60))
-    session_len = close_min - open_min
+            offset = j * session_secs / 3
+            mark = sess_open_dt + (sess_close_dt - sess_open_dt) * (offset / session_secs)
+            label_local_times.append((mark.hour, mark.minute))
 
     def time_to_x(ts: Any) -> int:
-        m = ts.hour * 60 + ts.minute - open_min
-        m = max(0, min(session_len, m))
-        return x + int(m * w / session_len)
+        delta = (ts - sess_open_dt).total_seconds()
+        delta = max(0.0, min(session_secs, delta))
+        return x + int(delta * w / session_secs)
 
     def line_xy(ts: Any, price: float) -> tuple[int, int]:
         py = y + int((p_hi - price) / (p_hi - p_lo) * line_h)
@@ -372,7 +382,7 @@ def _draw_chart(
                 255,
             )
             # Bar width derived from a 5-minute slot within the session
-            bar_w = max(2, int(w * 5 / session_len) - 1)
+            bar_w = max(2, int(w * (5 * 60) / session_secs) - 1)
             for ts, v in zip(timestamps, volumes):
                 if v is None or v <= 0:
                     continue
@@ -388,15 +398,25 @@ def _draw_chart(
             bar_layer.putalpha(ImageChops.multiply(bar_layer.split()[3], mask_img))
             base.alpha_composite(bar_layer, (x, vol_y0))
 
-    # X-axis labels at fixed market times (10:00 / 12:00 / 14:30 / 16:30 for SET,
-    # 09:30 / 12:00 / 14:00 / 16:00 for US).
+    # X-axis labels — always shown in Bangkok time. Source session times are
+    # built in the symbol's own timezone (SET 10:00-16:30, US 09:30-16:00 ET),
+    # then converted to BKK for display: US labels naturally render as
+    # 20:30/23:00/01:00/03:00 during EDT (overnight in Thailand).
     label_font = _font(22)
-    last_idx = len(label_times) - 1
-    for j, (lh, lm) in enumerate(label_times):
-        m_off = lh * 60 + lm - open_min
-        m_off = max(0, min(session_len, m_off))
-        bx = x + int(m_off * w / session_len)
-        label = f"{lh:02d}:{lm:02d}"
+    label_entries: list[tuple[int, str]] = []
+    for lh, lm in label_local_times:
+        mark_local = sess_open_dt.replace(hour=lh, minute=lm, second=0, microsecond=0)
+        delta = (mark_local - sess_open_dt).total_seconds()
+        delta = max(0.0, min(session_secs, delta))
+        bx = x + int(delta * w / session_secs)
+        try:
+            label = mark_local.astimezone(BKK_TZ).strftime("%H:%M")
+        except Exception:
+            label = f"{lh:02d}:{lm:02d}"
+        label_entries.append((bx, label))
+
+    last_idx = len(label_entries) - 1
+    for j, (bx, label) in enumerate(label_entries):
         lw = d.textlength(label, font=label_font)
         if j == 0:
             x_text = x
