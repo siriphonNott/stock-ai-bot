@@ -215,14 +215,14 @@ def summarize_earnings(payload: dict) -> str:
 
     if targets:
         fv = sum(targets) / len(targets)
-        row = _row("Fair Value", f"{cur}{fv:,.2f}", _verdict_note(fv))
+        row = _row("Fair Price", f"{cur}{fv:,.2f}", _verdict_note(fv))
         if row:
             lines.append(row)
     else:
         # Fallback: Graham's Number when no analyst coverage
         graham = _graham_fair_value(payload.get("eps"), payload.get("bvps"))
         if graham is not None:
-            row = _row("Fair Value", f"{cur}{graham:,.2f}", _verdict_note(graham, "Graham"))
+            row = _row("Fair Price", f"{cur}{graham:,.2f}", _verdict_note(graham, "Graham"))
             if row:
                 lines.append(row)
 
