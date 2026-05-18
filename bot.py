@@ -18,6 +18,7 @@ from telegram.ext import (
 )
 
 from card import _fetch_logo, render_card
+from fear_greed import get_fear_greed_index, render_fear_greed_card
 from intent import classify_with_llm, looks_like_stock_command
 from list_card import render_list_card
 from screener import enrich_with_intraday, fetch_movers, fetch_quotes
@@ -59,6 +60,19 @@ def _detect_top_command(text: str) -> tuple[str, str, int] | None:
     else:
         direction = "gainers"
     return market, direction, n
+
+
+_FEAR_GREED_RE = re.compile(
+    r"\bfear\s*(?:&|and)?\s*greed(?:\s*index)?\b"
+    r"|\bfear\s+index\b|\bgreed\s+index\b"
+    r"|\bf\s*&\s*g\b|\bfng\b"
+    r"|ดัชนีความกลัว|ดัชนีกลัว(?:ความ)?โลภ|ดัชนีกลัวและโลภ|กลัวและโลภ|กลัวโลภ",
+    re.IGNORECASE,
+)
+
+
+def _detect_fear_greed(text: str) -> bool:
+    return bool(_FEAR_GREED_RE.search(text))
 
 
 def _detect_mag7(text: str) -> bool:
@@ -105,6 +119,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text
 
     # Fast-path regex
+    if _detect_fear_greed(text):
+        await _handle_fear_greed_command(update, context)
+        return
     if _detect_mag7(text):
         await _handle_mag7_command(update, context)
         return
@@ -237,6 +254,24 @@ async def _handle_top_command(
     except Exception:
         log.exception("top command failed")
         await update.message.reply_text("ดึงข้อมูล Top movers ไม่สำเร็จ ลองอีกครั้ง")
+
+
+async def _handle_fear_greed_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+    try:
+        data = await asyncio.to_thread(get_fear_greed_index)
+        if not data:
+            await update.message.reply_text("ดึงข้อมูล Fear & Greed Index ไม่สำเร็จ ลองอีกครั้ง")
+            return
+        img = await asyncio.to_thread(render_fear_greed_card, data)
+        if not img:
+            await update.message.reply_text("เรนเดอร์ Fear & Greed Index ไม่สำเร็จ")
+            return
+        await update.message.reply_photo(photo=img, caption="Fear & Greed Index — CNN")
+    except Exception:
+        log.exception("fear-greed command failed")
+        await update.message.reply_text("ดึงข้อมูล Fear & Greed Index ไม่สำเร็จ ลองอีกครั้ง")
 
 
 async def _handle_mag7_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
