@@ -210,14 +210,22 @@ def _draw_chart(
         d.text((plot_x + plot_w + axis_w - lw, y - 14), label, font=label_font, fill=TEXT_DIM)
 
     # Filled area below line (translucent — subtle gradient feel)
-    fill_color = (line_color[0], line_color[1], line_color[2], 30)
+    fill_color = (line_color[0], line_color[1], line_color[2], 35)
     poly = [to_xy(i, p) for i, p in enumerate(prices)]
     poly_filled = poly + [(plot_x + plot_w, plot_y + plot_h), (plot_x, plot_y + plot_h)]
     d.polygon(poly_filled, fill=fill_color)
 
-    # Main line (thicker, smoothed via multiple passes if needed)
-    for i in range(len(poly) - 1):
-        d.line([poly[i], poly[i + 1]], fill=line_color, width=3)
+    # Soft glow under the main line — wider, more transparent
+    glow_color = (line_color[0], line_color[1], line_color[2], 70)
+    try:
+        d.line(poly, fill=glow_color, width=9, joint="curve")
+        d.line(poly, fill=line_color, width=4, joint="curve")
+    except TypeError:
+        # Older Pillow without `joint=` — fall back to segment-by-segment
+        for i in range(len(poly) - 1):
+            d.line([poly[i], poly[i + 1]], fill=glow_color, width=9)
+        for i in range(len(poly) - 1):
+            d.line([poly[i], poly[i + 1]], fill=line_color, width=4)
 
     # X-axis time labels — 4 evenly spaced points (5 cause overlap on long times)
     n_labels = 4
@@ -346,11 +354,11 @@ def render_card(
     y_tabs = y_div + 40
     _draw_tabs(d, PAD, y_tabs, W - 2 * PAD)
 
-    # --- Chart area
+    # --- Chart area (taller — chart is the focal point of the card)
     chart_x = PAD
     chart_y = y_tabs + 80
     chart_w = W - 2 * PAD
-    chart_h = 360
+    chart_h = 480
     if intraday:
         _draw_chart(
             img,
