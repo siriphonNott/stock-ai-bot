@@ -298,15 +298,15 @@ def _draw_chart(
 
     # Draw the line on top — soft glow + crisp main stroke
     d = ImageDraw.Draw(base, "RGBA")
-    glow = (line_color[0], line_color[1], line_color[2], 80)
+    glow = (line_color[0], line_color[1], line_color[2], 70)
     try:
-        d.line(poly, fill=glow, width=8, joint="curve")
-        d.line(poly, fill=line_color, width=3, joint="curve")
+        d.line(poly, fill=glow, width=6, joint="curve")
+        d.line(poly, fill=line_color, width=2, joint="curve")
     except TypeError:
         for i in range(len(poly) - 1):
-            d.line([poly[i], poly[i + 1]], fill=glow, width=8)
+            d.line([poly[i], poly[i + 1]], fill=glow, width=6)
         for i in range(len(poly) - 1):
-            d.line([poly[i], poly[i + 1]], fill=line_color, width=3)
+            d.line([poly[i], poly[i + 1]], fill=line_color, width=2)
 
     # Volume bars at the bottom — clip to 90th percentile so a single opening
     # spike doesn't squash the rest of the day into invisible nubs.
