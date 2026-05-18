@@ -120,21 +120,26 @@ def _draw_gauge(base: Image.Image, *, cx: int, cy: int, score: float) -> None:
 
     d = ImageDraw.Draw(base, "RGBA")
 
-    # 5 pie slices — active is bigger and bright; inactive is dim petal
+    # 5 pie slices — active uses a darker, translucent fill with a bright
+    # outline so it reads as "raised glass" rather than a solid block.
     for i, (_, vivid, _) in enumerate(ZONES):
         start = 180 + i * 36
         end = 180 + (i + 1) * 36
         if i == active:
-            # Active segment: bright fill + subtle lighter outline ring
+            dark_fill = (
+                int(vivid[0] * 0.45),
+                int(vivid[1] * 0.45),
+                int(vivid[2] * 0.45),
+                210,
+            )
             d.pieslice(
                 [cx - r_active, cy - r_active, cx + r_active, cy + r_active],
-                start, end, fill=vivid,
+                start, end, fill=dark_fill,
             )
-            # Lighter outline around the active segment for a "raised" feel
             outline = (
-                min(255, vivid[0] + 40),
-                min(255, vivid[1] + 30),
-                min(255, vivid[2] + 40),
+                min(255, vivid[0] + 30),
+                min(255, vivid[1] + 20),
+                min(255, vivid[2] + 30),
                 255,
             )
             d.arc(
