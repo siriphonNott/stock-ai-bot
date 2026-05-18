@@ -195,21 +195,14 @@ def summarize_earnings(payload: dict) -> str:
         if d:
             lines.append(d)
 
-    # Stock Fair Value — blended from analyst price targets
-    t_low = payload.get("target_low")
-    t_mean = payload.get("target_mean")
-    t_median = payload.get("target_median")
-    n_analysts = payload.get("num_analysts")
-
-    targets: list[tuple[str, float, str]] = []
-    if t_low is not None and t_low > 0:
-        targets.append(("Analyst Low", t_low, ""))
-    if t_mean is not None and t_mean > 0:
-        note = f"(n={int(n_analysts)})" if n_analysts else ""
-        targets.append(("Analyst Mean", t_mean, note))
-    if t_median is not None and t_median > 0:
-        targets.append(("Analyst Median", t_median, ""))
-
+    # Fair Value — blended from analyst price targets, with Graham fallback
+    targets = [
+        t for t in (
+            payload.get("target_low"),
+            payload.get("target_mean"),
+            payload.get("target_median"),
+        ) if t is not None and t > 0
+    ]
     price = payload.get("price")
 
     def _verdict_note(value: float, label: str = "") -> str:
@@ -221,21 +214,17 @@ def summarize_earnings(payload: dict) -> str:
         return f"({label})" if label else ""
 
     if targets:
-        for label, val, note in targets:
-            r = _row(label, f"{cur}{val:,.2f}", note)
-            if r:
-                lines.append(r)
-        avg = sum(v for _, v, _ in targets) / len(targets)
-        a = _row("Avg Fair Value", f"{cur}{avg:,.2f}", _verdict_note(avg))
-        if a:
-            lines.append(a)
+        fv = sum(targets) / len(targets)
+        row = _row("Fair Value", f"{cur}{fv:,.2f}", _verdict_note(fv))
+        if row:
+            lines.append(row)
     else:
         # Fallback: Graham's Number when no analyst coverage
         graham = _graham_fair_value(payload.get("eps"), payload.get("bvps"))
         if graham is not None:
-            g = _row("Stock Fair Value", f"{cur}{graham:,.2f}", _verdict_note(graham, "Graham"))
-            if g:
-                lines.append(g)
+            row = _row("Fair Value", f"{cur}{graham:,.2f}", _verdict_note(graham, "Graham"))
+            if row:
+                lines.append(row)
 
     if not lines:
         return ""
