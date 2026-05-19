@@ -222,7 +222,7 @@ def _h_qresults(payload) -> int:
         if _values(payload.get(k)):
             cells += 1
     rows = (cells + 1) // 2
-    h += rows * 140 - 12  # box_h=128 + gap=12, then minus last gap
+    h += rows * 164 - 12  # box_h=152 + gap=12, then minus last gap
     h += 12 + 16          # gap + divider+space
     op = _values(payload.get("quarterly_operating_income"))
     ni = _values(payload.get("quarterly_net_income"))
@@ -433,14 +433,17 @@ def _draw_qresults(
             return None
         v0 = arr[0]
         tag_text, direction = (None, None)
+        sub_text = None
         if len(arr) > 4:
             tag_text, direction = _fmt_pct_yoy(v0, arr[4])
+            sub_text = f"vs {_fmt_m(arr[4], cur)} ปีก่อน"
         return {
             "label": label,
             "value": _fmt_m(v0, cur),
             "color": GREEN if v0 >= 0 else RED,
             "tag": tag_text or "",
             "dir": direction,
+            "sub": sub_text or "",
         }
 
     cells = [c for c in (
@@ -450,16 +453,9 @@ def _draw_qresults(
         cell(ni,  "Net Income (GAAP)"),
     ) if c]
 
-    # Special override: Net Income tag shows "vs <prev> ปีก่อน" instead of %
-    if ni and len(ni) > 4 and cells:
-        for c in cells:
-            if c["label"] == "Net Income (GAAP)":
-                c["tag"] = f"vs {_fmt_m(ni[4], cur)} ปีก่อน"
-                c["dir"] = None
-
     gap = 12
     box_w = (ix1 - ix0 - gap) // 2
-    box_h = 128
+    box_h = 152
     for i, c in enumerate(cells):
         row_i = i // 2
         col_i = i % 2
@@ -479,13 +475,20 @@ def _draw_qresults(
         )
         if c["tag"]:
             tag_font = _font(21, bold=True)
-            tag_y = by + box_h - pad - 26
+            sub_font = _font(16)
+            sub_h = 22 if c.get("sub") else 0
+            tag_y = by + box_h - pad - 26 - sub_h
             d.text((bx + pad, tag_y), c["tag"], font=tag_font, fill=TEXT_PRIMARY)
             d_arrow = c.get("dir")
             if d_arrow:
                 tw = int(d.textlength(c["tag"], font=tag_font))
                 draw_fn = _draw_up_triangle if d_arrow == "up" else _draw_down_triangle
                 draw_fn(d, bx + pad + tw + 8, tag_y + 4, size=20)
+            if c.get("sub"):
+                d.text(
+                    (bx + pad, tag_y + 28),
+                    c["sub"], font=sub_font, fill=TEXT_LABEL,
+                )
 
     rows = (len(cells) + 1) // 2
     y += rows * (box_h + gap) - gap
