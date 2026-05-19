@@ -548,15 +548,22 @@ def _draw_meta_lines(
         d.ellipse([dot_x, y + 11, dot_x + 14, y + 25], fill=dot_color)
         y += 42
 
-    # Line 3: ↗ X% วันนี้
+    # Line 3: ▲/▼ X% วันนี้
     if change_pct is not None:
-        # Draw triangle arrow
         ax, ay = PAD, y + 18
-        arrow_size = 16
+        arrow_size = 20
         if is_up:
-            tri = [(ax, ay + arrow_size), (ax + arrow_size, ay), (ax + arrow_size, ay + arrow_size)]
+            tri = [
+                (ax + arrow_size * 0.50, ay),
+                (ax + arrow_size,        ay + arrow_size * 0.92),
+                (ax,                     ay + arrow_size * 0.92),
+            ]
         else:
-            tri = [(ax, ay), (ax + arrow_size, ay + arrow_size), (ax + arrow_size, ay)]
+            tri = [
+                (ax,                     ay + arrow_size * 0.08),
+                (ax + arrow_size,        ay + arrow_size * 0.08),
+                (ax + arrow_size * 0.50, ay + arrow_size),
+            ]
         d.polygon(tri, fill=color)
 
         text_x = ax + arrow_size + 14
