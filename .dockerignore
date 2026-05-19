@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.env.example
 .git
 .gitignore
 .DS_Store
@@ -11,3 +12,9 @@ __pycache__/
 .idea/
 .vscode/
 *.md
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
