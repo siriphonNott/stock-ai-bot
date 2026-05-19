@@ -39,8 +39,8 @@ AMBER            = (210, 140, 40, 255)       # caution
 
 BADGE_OVER_BG    = (252, 235, 235, 255)
 BADGE_OVER_TEXT  = (163, 45, 45, 255)
-BADGE_UNDER_BG   = (231, 245, 238, 255)
-BADGE_UNDER_TEXT = (29, 110, 79, 255)
+BADGE_UNDER_BG   = (188, 232, 205, 255)   # softer saturated mint
+BADGE_UNDER_TEXT = (18, 88, 58, 255)
 
 CURRENCY_SYMBOLS = {"USD": "$", "THB": "฿", "EUR": "€", "GBP": "£", "JPY": "¥"}
 
@@ -66,12 +66,38 @@ def _fmt_m(v: float | None, cur: str = "$") -> str | None:
     return f"-{cur}{body}" if v < 0 else f"{cur}{body}"
 
 
-def _fmt_pct_yoy(curr: float | None, prev: float | None) -> str | None:
+def _fmt_pct_yoy(curr: float | None, prev: float | None) -> tuple[str | None, str | None]:
+    """Returns (text, direction) where direction is "up" / "down" / None
+    (small dead-zone around 0 so near-flat values get no arrow)."""
     p = _pct(curr, prev)
     if p is None:
-        return None
-    emoji = " 🔥" if p >= 30 else ""
-    return f"{p:+.0f}% YoY{emoji}"
+        return None, None
+    direction = "up" if p > 1 else ("down" if p < -1 else None)
+    return f"{p:+.0f}% YoY", direction
+
+
+def _draw_up_triangle(d: ImageDraw.ImageDraw, x: float, y: float, size: int = 16) -> None:
+    """Filled green up-triangle (apex at top)."""
+    d.polygon(
+        [
+            (x + size * 0.50, y),
+            (x + size,        y + size * 0.92),
+            (x,               y + size * 0.92),
+        ],
+        fill=GREEN,
+    )
+
+
+def _draw_down_triangle(d: ImageDraw.ImageDraw, x: float, y: float, size: int = 16) -> None:
+    """Filled red down-triangle (apex at bottom)."""
+    d.polygon(
+        [
+            (x,               y + size * 0.08),
+            (x + size,        y + size * 0.08),
+            (x + size * 0.50, y + size),
+        ],
+        fill=RED,
+    )
 
 
 def _wrap(text: str, font: Any, max_w: int, d: ImageDraw.ImageDraw) -> list[str]:
@@ -131,12 +157,12 @@ def _row(
     d: ImageDraw.ImageDraw, x0: int, x1: int, y: int,
     label: str, value: str, value_color: tuple,
 ) -> int:
-    f_lbl = _font(20)
-    f_val = _font(22, bold=True)
+    f_lbl = _font(26)
+    f_val = _font(28, bold=True)
     d.text((x0, y), label, font=f_lbl, fill=TEXT_SECONDARY)
     vw = int(d.textlength(value, font=f_val))
     d.text((x1 - vw, y - 2), value, font=f_val, fill=value_color)
-    return y + 34
+    return y + 44
 
 
 def _hline(d: ImageDraw.ImageDraw, x0: int, x1: int, y: int) -> None:
@@ -144,42 +170,42 @@ def _hline(d: ImageDraw.ImageDraw, x0: int, x1: int, y: int) -> None:
 
 
 def _section_title(d: ImageDraw.ImageDraw, x: int, y: int, text: str) -> int:
-    f = _font(15, bold=True)
+    f = _font(20, bold=True)
     d.text((x, y), text.upper(), font=f, fill=TEXT_LABEL)
-    return y + 30
+    return y + 36
 
 
 # ────────────────────────── card heights ──────────────────────────
 
 def _h_company(d, description, tags, inner_w) -> int:
-    h = INNER_PAD_Y * 2 + 60 + 20  # padding + logo block
+    h = INNER_PAD_Y * 2 + 68 + 22  # padding + logo block
     if description:
-        f = _font(20)
+        f = _font(23)
         lines = _wrap(description, f, inner_w, d)[:3]
-        h += len(lines) * 30 + 6
+        h += len(lines) * 34 + 6
     if tags:
-        h += 40
+        h += 46
     return h
 
 
 def _h_price(payload) -> int:
-    h = INNER_PAD_Y * 2 + 32 + 56  # header + price row
+    h = INNER_PAD_Y * 2 + 36 + 70  # header + price row
     if payload:
         targets = [t for t in (payload.get("target_low"), payload.get("target_mean"),
                                payload.get("target_median")) if t and t > 0]
         if targets or (payload.get("eps") and payload.get("bvps")):
-            h += 30
+            h += 36
     return h
 
 
 def _h_valuation(metrics: StockMetrics) -> int:
-    h = INNER_PAD_Y * 2 + 30  # padding + title
+    h = INNER_PAD_Y * 2 + 36  # padding + title
     if metrics.eps is not None:
-        h += 34
+        h += 44
     h += 14  # divider + spacing
     for v in (metrics.pe, metrics.pe_fwd, metrics.pb, metrics.ps, metrics.bvps):
         if v is not None:
-            h += 34
+            h += 44
     return h
 
 
@@ -189,22 +215,22 @@ def _h_qresults(payload) -> int:
     rev = _values(payload.get("quarterly_revenue"))
     if not rev:
         return 0
-    h = INNER_PAD_Y * 2 + 30  # padding + title
+    h = INNER_PAD_Y * 2 + 36  # padding + title
     cells = 0
     for k in ("quarterly_revenue", "quarterly_gross_profit",
               "quarterly_operating_income", "quarterly_net_income"):
         if _values(payload.get(k)):
             cells += 1
     rows = (cells + 1) // 2
-    h += rows * 102 - 12  # box_h=92 + gap=12, then minus last gap (we add gap)
+    h += rows * 140 - 12  # box_h=128 + gap=12, then minus last gap
     h += 12 + 16          # gap + divider+space
     op = _values(payload.get("quarterly_operating_income"))
     ni = _values(payload.get("quarterly_net_income"))
     if op and rev[0]:
-        h += 34
+        h += 44
     eq = _values(payload.get("quarterly_equity"))
     if ni and eq:
-        h += 34
+        h += 44
     return h
 
 
@@ -215,13 +241,13 @@ def _h_balance(payload) -> int:
     debt = _values(payload.get("quarterly_total_debt"))
     if not (cash or debt):
         return 0
-    h = INNER_PAD_Y * 2 + 30  # padding + title
+    h = INNER_PAD_Y * 2 + 36  # padding + title
     if cash:
-        h += 34
+        h += 44
     if debt:
-        h += 34
+        h += 44
     if cash and debt:
-        h += 34
+        h += 44
     return h
 
 
@@ -237,7 +263,7 @@ def _draw_company(
     ix1 = x1 - INNER_PAD_X
     y = y0 + INNER_PAD_Y
 
-    ls = 60
+    ls = 68
     if logo is not None:
         img.alpha_composite(_round_logo(logo, ls), (ix0, y))
     else:
@@ -247,7 +273,7 @@ def _draw_company(
 
     nx = ix0 + ls + 16
     name = metrics.name or metrics.symbol
-    d.text((nx, y + 2), name, font=_font(28, bold=True), fill=TEXT_PRIMARY)
+    d.text((nx, y + 2), name, font=_font(32, bold=True), fill=TEXT_PRIMARY)
 
     parts = [metrics.symbol]
     if metrics.exchange_name:
@@ -255,31 +281,31 @@ def _draw_company(
     if sector or metrics.sector:
         parts.append(sector or metrics.sector)
     d.text(
-        (nx, y + 38),
-        " · ".join(parts), font=_font(18), fill=TEXT_SECONDARY,
+        (nx, y + 42),
+        " · ".join(parts), font=_font(21), fill=TEXT_SECONDARY,
     )
 
-    y += ls + 20
+    y += ls + 22
 
     if description:
-        f = _font(20)
+        f = _font(23)
         for ln in _wrap(description, f, ix1 - ix0, d)[:3]:
             d.text((ix0, y), ln, font=f, fill=TEXT_SECONDARY)
-            y += 30
+            y += 34
         y += 6
 
     if tags:
-        f_tag = _font(17)
+        f_tag = _font(20)
         tx = ix0
         for t in tags[:4]:
-            if tx + 100 > ix1:
+            if tx + 110 > ix1:
                 break
             w, _ = _pill(
                 d, tx, y, t, f_tag,
                 fill=INNER_BG, text_color=TEXT_SECONDARY,
-                pad_x=14, pad_y=7, radius=20,
+                pad_x=16, pad_y=8, radius=22,
             )
-            tx += w + 8
+            tx += w + 10
 
 
 def _draw_price(
@@ -290,7 +316,7 @@ def _draw_price(
     ix1 = x1 - INNER_PAD_X
     y = y0 + INNER_PAD_Y
 
-    f_h = _font(18)
+    f_h = _font(20)
     d.text((ix0, y), "Stock Report", font=f_h, fill=TEXT_SECONDARY)
 
     if payload and (payload.get("quarterly_revenue") or []):
@@ -299,10 +325,10 @@ def _draw_price(
         qw = d.textlength(ql, font=f_h)
         d.text((ix1 - qw, y), ql, font=f_h, fill=TEXT_SECONDARY)
 
-    y += 32
+    y += 36
 
     price = metrics.price
-    f_p = _font(42, bold=True)
+    f_p = _font(54, bold=True)
     p_str = f"{cur}{price:,.2f}" if price is not None else "-"
     d.text((ix0, y), p_str, font=f_p, fill=TEXT_PRIMARY)
     pw = int(d.textlength(p_str, font=f_p))
@@ -324,15 +350,15 @@ def _draw_price(
         bg = BADGE_UNDER_BG if kind == "under" else BADGE_OVER_BG
         tc = BADGE_UNDER_TEXT if kind == "under" else BADGE_OVER_TEXT
         _pill(
-            d, ix0 + pw + 14, y + 16, text, _font(15, bold=True),
-            fill=bg, text_color=tc, pad_x=10, pad_y=4, radius=6,
+            d, ix0 + pw + 16, y + 20, text, _font(18, bold=True),
+            fill=bg, text_color=tc, pad_x=14, pad_y=6, radius=6,
         )
 
-    y += 56
+    y += 70
     if fair is not None:
         d.text(
             (ix0, y), f"Fair price: {cur}{fair:,.2f}",
-            font=_font(18), fill=TEXT_SECONDARY,
+            font=_font(24), fill=TEXT_SECONDARY,
         )
 
 
@@ -406,19 +432,15 @@ def _draw_qresults(
         if not arr:
             return None
         v0 = arr[0]
+        tag_text, direction = (None, None)
+        if len(arr) > 4:
+            tag_text, direction = _fmt_pct_yoy(v0, arr[4])
         return {
             "label": label,
             "value": _fmt_m(v0, cur),
             "color": GREEN if v0 >= 0 else RED,
-            "tag": (
-                _fmt_pct_yoy(v0, arr[4])
-                if len(arr) > 4
-                else (
-                    f"vs {_fmt_m(arr[4], cur)} ปีก่อน"
-                    if False
-                    else ""
-                )
-            ),
+            "tag": tag_text or "",
+            "dir": direction,
         }
 
     cells = [c for c in (
@@ -433,10 +455,11 @@ def _draw_qresults(
         for c in cells:
             if c["label"] == "Net Income (GAAP)":
                 c["tag"] = f"vs {_fmt_m(ni[4], cur)} ปีก่อน"
+                c["dir"] = None
 
     gap = 12
     box_w = (ix1 - ix0 - gap) // 2
-    box_h = 92
+    box_h = 128
     for i, c in enumerate(cells):
         row_i = i // 2
         col_i = i % 2
@@ -445,20 +468,24 @@ def _draw_qresults(
         d.rounded_rectangle(
             [bx, by, bx + box_w, by + box_h], radius=10, fill=INNER_BG,
         )
-        pad = 12
+        pad = 14
         d.text(
             (bx + pad, by + pad),
-            c["label"], font=_font(15), fill=TEXT_LABEL,
+            c["label"], font=_font(18), fill=TEXT_LABEL,
         )
         d.text(
-            (bx + pad, by + pad + 22),
-            c["value"], font=_font(22, bold=True), fill=c["color"],
+            (bx + pad, by + pad + 28),
+            c["value"], font=_font(28, bold=True), fill=c["color"],
         )
         if c["tag"]:
-            d.text(
-                (bx + pad, by + box_h - pad - 18),
-                c["tag"], font=_font(14), fill=TEXT_SECONDARY,
-            )
+            tag_font = _font(21, bold=True)
+            tag_y = by + box_h - pad - 26
+            d.text((bx + pad, tag_y), c["tag"], font=tag_font, fill=TEXT_PRIMARY)
+            d_arrow = c.get("dir")
+            if d_arrow:
+                tw = int(d.textlength(c["tag"], font=tag_font))
+                draw_fn = _draw_up_triangle if d_arrow == "up" else _draw_down_triangle
+                draw_fn(d, bx + pad + tw + 8, tag_y + 4, size=20)
 
     rows = (len(cells) + 1) // 2
     y += rows * (box_h + gap) - gap
