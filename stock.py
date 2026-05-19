@@ -42,6 +42,9 @@ class StockMetrics:
     exchange_name: str | None = None
     market_state: str | None = None
     country: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    long_summary: str | None = None
 
 
 def get_stock_metrics(symbol: str) -> StockMetrics | None:
@@ -80,6 +83,9 @@ def get_stock_metrics(symbol: str) -> StockMetrics | None:
         exchange_name=info.get("fullExchangeName") or info.get("exchange"),
         market_state=info.get("marketState"),
         country=info.get("country"),
+        sector=info.get("sector"),
+        industry=info.get("industry"),
+        long_summary=info.get("longBusinessSummary"),
     )
 
 

@@ -23,12 +23,13 @@ from crypto_fear_greed import (
     render_crypto_fng_chart,
     render_crypto_fng_gauge,
 )
+from enrich import enrich_company
 from fear_greed import get_fear_greed_index, render_fear_greed_card
 from intent import classify_with_llm, looks_like_stock_command
 from list_card import render_list_card
+from report_card import render_stock_report_card
 from screener import enrich_with_intraday, fetch_movers, fetch_quotes
-from stock import format_metrics, get_earnings_payload, get_fx_rate, get_intraday_history, get_stock_metrics
-from summarizer import summarize_earnings
+from stock import get_earnings_payload, get_fx_rate, get_intraday_history, get_stock_metrics
 
 load_dotenv()
 
@@ -205,12 +206,24 @@ async def _process_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE, sy
         return
     symbol = resolved
 
-    # Card image — dark portrait layout with intraday chart
+    # Fetch chart inputs, earnings payload, logo, and enrichment in parallel
     try:
-        intraday, fx = await asyncio.gather(
+        intraday, fx, payload, logo, enrichment = await asyncio.gather(
             asyncio.to_thread(get_intraday_history, symbol),
             asyncio.to_thread(get_fx_rate, metrics.currency, "THB"),
+            asyncio.to_thread(get_earnings_payload, symbol),
+            asyncio.to_thread(_fetch_logo, symbol),
+            asyncio.to_thread(
+                enrich_company, symbol, metrics.name, metrics.long_summary,
+            ),
         )
+    except Exception:
+        log.exception("fetches failed for %s", symbol)
+        intraday = fx = payload = logo = None
+        enrichment = {"description_th": "", "tags": []}
+
+    # Chart card — unchanged
+    try:
         card_bytes = await asyncio.to_thread(
             render_card,
             symbol=metrics.symbol,
@@ -237,22 +250,22 @@ async def _process_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE, sy
         if card_bytes:
             await update.message.reply_photo(photo=card_bytes)
     except Exception:
-        log.exception("card render failed for %s", symbol)
+        log.exception("chart card render failed for %s", symbol)
 
-    reply = format_metrics(metrics)
-    await update.message.reply_text(reply, parse_mode=ParseMode.HTML)
-
-    # Earnings summary follow-up
+    # New stock report card — replaces the old text outputs
     try:
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        payload = await asyncio.to_thread(get_earnings_payload, symbol)
-        if not payload:
-            return
-        summary = await asyncio.to_thread(summarize_earnings, payload)
-        if summary:
-            await update.message.reply_text(summary, parse_mode=ParseMode.HTML)
+        report_bytes = await asyncio.to_thread(
+            render_stock_report_card,
+            metrics, payload,
+            sector=metrics.sector,
+            description=enrichment.get("description_th") or None,
+            tags=enrichment.get("tags") or None,
+            logo=logo,
+        )
+        if report_bytes:
+            await update.message.reply_photo(photo=report_bytes)
     except Exception:
-        log.exception("earnings summary failed for %s", symbol)
+        log.exception("report card render failed for %s", symbol)
 
 
 async def _handle_top_command(
