@@ -18,6 +18,12 @@ from telegram.ext import (
 )
 
 from card import _fetch_logo, render_card
+from crypto_fear_greed import (
+    get_btc_history,
+    get_crypto_fng,
+    render_crypto_fng_chart,
+    render_crypto_fng_gauge,
+)
 from fear_greed import get_fear_greed_index, render_fear_greed_card
 from intent import classify_with_llm, looks_like_stock_command
 from list_card import render_list_card
@@ -70,9 +76,23 @@ _FEAR_GREED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches: "crypto index", "crypto fear index", "crypto fear & greed index",
+# "fear index crypto", "fear crypto", "index crypto" — crypto + any of
+# fear/greed/index/fng on either side.
+_CRYPTO_FNG_RE = re.compile(
+    r"\bcrypto\b[^A-Za-z0-9]*\b(?:fear|greed|index|fng)\b"
+    r"|\b(?:fear|greed|index|fng)\b[^A-Za-z0-9]*\bcrypto\b"
+    r"|ดัชนี\s*คริปโต|คริปโต\s*ดัชนี|ดัชนี\s*crypto|crypto\s*ดัชนี",
+    re.IGNORECASE,
+)
+
 
 def _detect_fear_greed(text: str) -> bool:
     return bool(_FEAR_GREED_RE.search(text))
+
+
+def _detect_crypto_fear_greed(text: str) -> bool:
+    return bool(_CRYPTO_FNG_RE.search(text))
 
 
 def _detect_mag7(text: str) -> bool:
@@ -118,7 +138,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     text = update.message.text
 
-    # Fast-path regex
+    # Fast-path regex — crypto must come before generic F&G so "crypto fear
+    # & greed index" routes to crypto rather than CNN equity index.
+    if _detect_crypto_fear_greed(text):
+        await _handle_crypto_fear_greed_command(update, context)
+        return
     if _detect_fear_greed(text):
         await _handle_fear_greed_command(update, context)
         return
@@ -272,6 +296,42 @@ async def _handle_fear_greed_command(update: Update, context: ContextTypes.DEFAU
     except Exception:
         log.exception("fear-greed command failed")
         await update.message.reply_text("ดึงข้อมูล Fear & Greed Index ไม่สำเร็จ ลองอีกครั้ง")
+
+
+async def _handle_crypto_fear_greed_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    chat_id = update.effective_chat.id
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+    try:
+        fng_data, btc_hist = await asyncio.gather(
+            asyncio.to_thread(get_crypto_fng),
+            asyncio.to_thread(get_btc_history),
+        )
+        if not fng_data:
+            await update.message.reply_text(
+                "ดึงข้อมูล Crypto Fear & Greed Index ไม่สำเร็จ ลองอีกครั้ง"
+            )
+            return
+        gauge_img, chart_img = await asyncio.gather(
+            asyncio.to_thread(render_crypto_fng_gauge, fng_data),
+            asyncio.to_thread(render_crypto_fng_chart, fng_data, btc_hist),
+        )
+        if gauge_img:
+            await update.message.reply_photo(
+                photo=gauge_img, caption="Crypto Fear & Greed Index",
+            )
+        if chart_img:
+            await update.message.reply_photo(
+                photo=chart_img, caption="Crypto Fear & Greed Index — Chart",
+            )
+        if not gauge_img and not chart_img:
+            await update.message.reply_text("เรนเดอร์ Crypto Fear & Greed Index ไม่สำเร็จ")
+    except Exception:
+        log.exception("crypto fear-greed command failed")
+        await update.message.reply_text(
+            "ดึงข้อมูล Crypto Fear & Greed Index ไม่สำเร็จ ลองอีกครั้ง"
+        )
 
 
 async def _handle_mag7_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
