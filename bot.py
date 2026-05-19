@@ -19,7 +19,6 @@ from telegram.ext import (
 
 from card import _fetch_logo, render_card
 from crypto_fear_greed import (
-    get_btc_history,
     get_crypto_fng,
     render_crypto_fng_chart,
     render_crypto_fng_gauge,
@@ -304,10 +303,7 @@ async def _handle_crypto_fear_greed_command(
     chat_id = update.effective_chat.id
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
     try:
-        fng_data, btc_hist = await asyncio.gather(
-            asyncio.to_thread(get_crypto_fng),
-            asyncio.to_thread(get_btc_history),
-        )
+        fng_data = await asyncio.to_thread(get_crypto_fng)
         if not fng_data:
             await update.message.reply_text(
                 "ดึงข้อมูล Crypto Fear & Greed Index ไม่สำเร็จ ลองอีกครั้ง"
@@ -315,7 +311,7 @@ async def _handle_crypto_fear_greed_command(
             return
         gauge_img, chart_img = await asyncio.gather(
             asyncio.to_thread(render_crypto_fng_gauge, fng_data),
-            asyncio.to_thread(render_crypto_fng_chart, fng_data, btc_hist),
+            asyncio.to_thread(render_crypto_fng_chart, fng_data),
         )
         if gauge_img:
             await update.message.reply_photo(
