@@ -6,3 +6,5 @@ venv/
 .DS_Store
 *.log
 .preview/
+doc/preview/
+.claude/worktrees/
