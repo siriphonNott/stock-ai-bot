@@ -389,19 +389,26 @@ def render_crypto_fng_chart(data: dict | None) -> bytes | None:
             cur_month -= 12
             cur_year += 1
 
-    # Current value tag on right edge
+    # Current value tag on right edge — square, softer orange, rounded corners,
+    # value centered both axes via textbbox-derived offsets.
     last = history[-1]
     last_v = last["score"]
-    col = _zone_color(last_v)
     last_y = y_fng(last_v)
-    box_w, box_h = 70, 42
+    box_size = 44
     bx = x1 + 4
-    by = last_y - box_h / 2
-    d.rectangle([bx, by, bx + box_w, by + box_h], fill=(col[0], col[1], col[2], 255))
+    by = last_y - box_size / 2
+    d.rounded_rectangle(
+        [bx, by, bx + box_size, by + box_size],
+        radius=2,
+        fill=(0xEA, 0x8C, 0x00, 255),
+    )
     v_str = f"{int(round(last_v))}"
-    cur_font = _font(26, bold=True)
-    vw = d.textlength(v_str, font=cur_font)
-    d.text((bx + (box_w - vw) / 2, by + 5), v_str, font=cur_font, fill=TEXT_WHITE)
+    cur_font = _font(28, bold=True)
+    tb = d.textbbox((0, 0), v_str, font=cur_font)
+    tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    tx = bx + (box_size - tw) / 2 - tb[0]
+    ty = by + (box_size - th) / 2 - tb[1]
+    d.text((tx, ty), v_str, font=cur_font, fill=TEXT_WHITE)
 
     out = io.BytesIO()
     img.convert("RGB").save(out, format="PNG", optimize=True)
