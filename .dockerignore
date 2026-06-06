@@ -12,6 +12,8 @@ __pycache__/
 .idea/
 .vscode/
 *.md
+docker-compose*.yml
+.github/
 tests/
 test_*.py
 *_test.py

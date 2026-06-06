@@ -8,3 +8,4 @@ venv/
 .preview/
 doc/preview/
 .claude/worktrees/
+graphify-out/
