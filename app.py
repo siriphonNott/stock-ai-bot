@@ -10,15 +10,18 @@ header; if it's unset, the API is open (fine for internal-only docker networks).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from core import NoMatch, QueryError, render_query
+from crypto_fear_greed import _classify, get_crypto_fng
+from fear_greed import get_fear_greed_index
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,9 +44,53 @@ class RenderRequest(BaseModel):
     q: str
 
 
+def _stock_fear_index() -> dict | None:
+    data = get_fear_greed_index()
+    if not data:
+        return None
+    score = data.get("score")
+    if score is None:
+        return None
+    score = float(score)
+    return {"score": round(score), "label": _classify(score)}
+
+
+def _crypto_fear_index() -> dict | None:
+    data = get_crypto_fng(days=30)
+    if not data or not data.get("current"):
+        return None
+    current = data["current"]
+    try:
+        score = float(current["score"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"score": round(score), "label": current.get("name") or _classify(score)}
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/check-fear-index", dependencies=[Depends(require_api_key)])
+async def check_fear_index(
+    type: Optional[Literal["stock", "crypto"]] = Query(default=None),
+) -> dict:
+    loop = asyncio.get_running_loop()
+    stock_index = None
+    crypto_index = None
+
+    if type is None:
+        stock_index, crypto_index = await asyncio.gather(
+            loop.run_in_executor(None, _stock_fear_index),
+            loop.run_in_executor(None, _crypto_fear_index),
+        )
+    elif type == "stock":
+        stock_index = await loop.run_in_executor(None, _stock_fear_index)
+    else:
+        crypto_index = await loop.run_in_executor(None, _crypto_fear_index)
+
+    return {"stockIndex": stock_index, "cryptoIndex": crypto_index}
 
 
 async def _single(q: str, i: int) -> Response:
